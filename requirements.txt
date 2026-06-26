@@ -1,0 +1,10 @@
+aiortc
+av
+mss
+websockets
+requests
+pillow
+pystray
+pyobjc-core
+pyobjc-framework-Cocoa
+pyobjc-framework-Quartz
