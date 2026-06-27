@@ -47,6 +47,14 @@ SUPPORT_CORE_VERSION = "1.0.0"
 #   set_status(text) · on_connected(bool) · on_code(cc) · request_consent(allow, deny)
 _EMBED = {}
 
+# ── Platform abstraction (macOS port, 2026-06-26) ────────────────────────────
+# The agent began Windows-only; these flags gate the Windows-specific paths so
+# the same source runs on macOS. Most Windows calls already fail-safe (winreg /
+# ctypes.windll in try/except), so the key real branch is the shell in _run_cmd.
+_IS_WIN = sys.platform.startswith("win")
+_IS_MAC = sys.platform == "darwin"
+_NO_WINDOW = 0x08000000 if _IS_WIN else 0   # CREATE_NO_WINDOW is Windows-only
+
 
 async def _run_sender(server, sid, stok):
     """Stream this screen for a session — IN-PROCESS (no subprocess), so it works
@@ -166,15 +174,17 @@ async def _run_cmd(ws, m):
     cmd = m.get("cmd") or ""
 
     def _run():
-        if shell == "cmd":
+        if _IS_MAC:
+            args = ["/bin/zsh", "-lc", cmd]          # macOS default shell
+        elif shell == "cmd":
             args = ["cmd", "/c", cmd]
         else:
             args = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
         # stdin=DEVNULL is REQUIRED: a --windowed (no-console) exe has no valid
         # stdin handle, so without this the child hangs forever. CREATE_NO_WINDOW
-        # keeps anything from flashing on the client's screen.
+        # (Windows-only) keeps anything from flashing on the client's screen.
         return subprocess.run(args, capture_output=True, text=True, timeout=90,
-                              stdin=subprocess.DEVNULL, creationflags=0x08000000)
+                              stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
     try:
         p = await asyncio.to_thread(_run)   # off the event loop — heartbeats keep flowing
         txt = (p.stdout or "")
@@ -1332,6 +1342,38 @@ def _single_instance():
         return True                       # never block startup on a guard failure
 
 
+def _selftest():
+    """Smoke-test the cross-platform runtime on the build machine (Codemagic mac
+    runner). Run via `python agent.py --selftest`. Exit 0 = the platform basics
+    work; 1 = something the port still needs. Lets the cloud Mac VERIFY the macOS
+    runtime each build, not just compile it."""
+    ok = True
+    print("[selftest] platform:", sys.platform, "win=", _IS_WIN, "mac=", _IS_MAC)
+    mid = _machine_id(); print("[selftest] machine_id:", mid or "(empty)"); ok = ok and bool(mid)
+    print("[selftest] install_dir:", _INSTALL_DIR)
+    try:
+        cfg = _load_config(); print("[selftest] load_config OK ->", type(cfg).__name__)
+    except Exception as e:
+        print("[selftest] load_config FAIL:", e); ok = False
+    try:                                                  # the headless-fix shell path
+        import subprocess
+        line = ["/bin/zsh", "-lc", "echo selftest-shell-ok; uname -sr"] if _IS_MAC else ["cmd", "/c", "echo selftest-shell-ok"]
+        r = subprocess.run(line, capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+        print("[selftest] shell ->", (r.stdout or "").strip()[:120]); ok = ok and ("selftest-shell-ok" in (r.stdout or ""))
+    except Exception as e:
+        print("[selftest] shell FAIL:", e); ok = False
+    try:                                                  # tray backend (mac = pystray._darwin via pyobjc)
+        import pystray; print("[selftest] pystray backend ->", pystray.Icon.__module__)
+    except Exception as e:
+        print("[selftest] pystray FAIL:", e); ok = False
+    try:                                                  # the WebRTC screen-share stack
+        import aiortc, av, mss; print("[selftest] aiortc/av/mss import OK")
+    except Exception as e:
+        print("[selftest] webrtc imports FAIL:", e); ok = False
+    print("[selftest] RESULT:", "PASS" if ok else "FAIL")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     # In a --windowed exe there is no console: stdout/stderr are None → guard so
     # print()/flush() never crash (the GUI window is the client's UI instead).
@@ -1345,7 +1387,10 @@ if __name__ == "__main__":
     ap.add_argument("--label")
     ap.add_argument("--personal-key", dest="personal_key")
     ap.add_argument("--setup-elevated", action="store_true", dest="setup_elevated")
+    ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
+    if getattr(a, "selftest", False):
+        sys.exit(_selftest())
     # --onedir first run: copy the app to %LOCALAPPDATA%\BEMSupport + relaunch from
     # there (no temp extraction ever again). Done BEFORE the single-instance guard so
     # the installed copy acquires the mutex cleanly.

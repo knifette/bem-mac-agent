@@ -13,6 +13,10 @@ workflows:
           source venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
+      - name: Mac runtime self-test
+        script: |
+          source venv/bin/activate
+          python agent.py --selftest
       - name: Build .app (PyInstaller, unsigned for now)
         script: |
           source venv/bin/activate
