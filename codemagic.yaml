@@ -30,6 +30,12 @@ workflows:
             --hidden-import rtc_sender --hidden-import pystray._darwin \
             agent.py
           ls -la dist/
+      - name: Check signing creds reach this app
+        script: |
+          for v in APP_STORE_CONNECT_PRIVATE_KEY APP_STORE_CONNECT_KEY_IDENTIFIER APP_STORE_CONNECT_ISSUER_ID CERTIFICATE_PRIVATE_KEY; do
+            eval "val=\$$v"
+            if [ -n "$val" ]; then echo "$v: SET (${#val} chars)"; else echo "$v: EMPTY"; fi
+          done
       - name: Developer ID sign (cert auto-created via the ASC key — no Mac/CSR)
         script: |
           set -e
