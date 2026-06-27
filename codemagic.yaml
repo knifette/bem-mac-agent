@@ -4,8 +4,11 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
+      groups:
+        - appstore_credentials      # shared from the iOS setup: ASC API key (.p8) + CERTIFICATE_PRIVATE_KEY
       vars:
         PYTHONUNBUFFERED: "1"
+        BUNDLE_ID: "solutions.bem.support"
     scripts:
       - name: Install Python deps
         script: |
@@ -17,30 +20,38 @@ workflows:
         script: |
           source venv/bin/activate
           python agent.py --selftest
-      - name: Build .app (PyInstaller, unsigned for now)
+      - name: Build .app (PyInstaller)
         script: |
           source venv/bin/activate
           pyinstaller --noconfirm --windowed --name BEMSupport \
+            --osx-bundle-identifier "$BUNDLE_ID" \
             --collect-all aiortc --collect-all av \
             --hidden-import mss --hidden-import websockets --hidden-import requests \
             --hidden-import rtc_sender --hidden-import pystray._darwin \
             agent.py
-          echo "--- built app ---"
           ls -la dist/
-      - name: Package DMG (unsigned)
+      - name: Developer ID sign (cert auto-created via the ASC key — no Mac/CSR)
         script: |
-          mkdir -p dmgroot && cp -R "dist/BEMSupport.app" dmgroot/
-          hdiutil create -volname "BEM Support" -srcfolder dmgroot -ov -format UDZO BEMSupport-unsigned.dmg
-          ls -la BEMSupport-unsigned.dmg
+          keychain initialize
+          # create a Developer ID Application cert with the ASC key (or reuse an existing one)
+          app-store-connect certificates create \
+            --type DEVELOPER_ID_APPLICATION \
+            --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save \
+          || app-store-connect list-certificates \
+            --type DEVELOPER_ID_APPLICATION \
+            --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save
+          keychain add-certificates
+          CERT="$(security find-identity -v -p codesigning build.keychain | grep 'Developer ID Application' | head -1 | sed -E 's/.*\) ([A-F0-9]+) .*/\1/')"
+          echo "signing identity: $CERT"
+          codesign --deep --force --options runtime --timestamp --sign "$CERT" dist/BEMSupport.app
+          codesign --verify --strict --verbose=2 dist/BEMSupport.app
+      - name: Notarize + staple DMG
+        script: |
+          mkdir -p dmgroot && cp -R dist/BEMSupport.app dmgroot/
+          hdiutil create -volname "BEM Support" -srcfolder dmgroot -ov -format UDZO BEMSupport.dmg
+          app-store-connect notarize BEMSupport.dmg
+          xcrun stapler staple BEMSupport.dmg || true
+          ls -la BEMSupport.dmg
     artifacts:
-      - BEMSupport-unsigned.dmg
+      - BEMSupport.dmg
       - dist/BEMSupport.app
-
-# ── TODO (after the first green unsigned build) ───────────────────────────────
-# Add Developer ID signing + notarization:
-#   environment.ios_signing OR a code_signing block with the Developer ID
-#   Application cert (loaded into Codemagic as an env var group), then:
-#     codesign --deep --force --options runtime --sign "Developer ID Application: <BEM>" dist/BEMSupport.app
-#     xcrun notarytool submit BEMSupport.dmg --key <ASC_KEY> --key-id <KID> --issuer <ISS> --wait
-#     xcrun stapler staple BEMSupport.dmg
-# That turns the unsigned .dmg into a clean, no-Gatekeeper-warning install.
