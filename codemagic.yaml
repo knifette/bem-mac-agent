@@ -32,25 +32,31 @@ workflows:
           ls -la dist/
       - name: Developer ID sign (cert auto-created via the ASC key — no Mac/CSR)
         script: |
+          set -e
           keychain initialize
-          # create a Developer ID Application cert with the ASC key (or reuse an existing one)
-          app-store-connect certificates create \
-            --type DEVELOPER_ID_APPLICATION \
-            --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save \
-          || app-store-connect list-certificates \
-            --type DEVELOPER_ID_APPLICATION \
-            --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save
+          echo "--- create Developer ID Application cert via the ASC key ---"
+          app-store-connect certificates create --type DEVELOPER_ID_APPLICATION --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save || echo "(create failed — may already exist, will list)"
+          app-store-connect list-certificates --type DEVELOPER_ID_APPLICATION --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save || true
           keychain add-certificates
-          CERT="$(security find-identity -v -p codesigning build.keychain | grep 'Developer ID Application' | head -1 | sed -E 's/.*\) ([A-F0-9]+) .*/\1/')"
-          echo "signing identity: $CERT"
+          echo "--- signing identities available ---"
+          security find-identity -v -p codesigning
+          CERT="$(security find-identity -v -p codesigning | grep 'Developer ID Application' | head -1 | sed -E 's/^[[:space:]]*[0-9]+\) ([0-9A-F]+) .*/\1/')"
+          echo "chosen identity: [$CERT]"
+          test -n "$CERT"     # FAIL loudly if no real Developer ID identity (no ad-hoc fallback)
           codesign --deep --force --options runtime --timestamp --sign "$CERT" dist/BEMSupport.app
           codesign --verify --strict --verbose=2 dist/BEMSupport.app
       - name: Notarize + staple DMG
         script: |
+          set -e
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY" > /tmp/asc_key.p8
           mkdir -p dmgroot && cp -R dist/BEMSupport.app dmgroot/
           hdiutil create -volname "BEM Support" -srcfolder dmgroot -ov -format UDZO BEMSupport.dmg
-          app-store-connect notarize BEMSupport.dmg
-          xcrun stapler staple BEMSupport.dmg || true
+          xcrun notarytool submit BEMSupport.dmg \
+            --key /tmp/asc_key.p8 \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --wait
+          xcrun stapler staple BEMSupport.dmg
           ls -la BEMSupport.dmg
     artifacts:
       - BEMSupport.dmg
