@@ -32,7 +32,7 @@ workflows:
           ls -la dist/
       - name: Check signing creds reach this app
         script: |
-          for v in APP_STORE_CONNECT_PRIVATE_KEY APP_STORE_CONNECT_KEY_IDENTIFIER APP_STORE_CONNECT_ISSUER_ID CERTIFICATE_PRIVATE_KEY; do
+          for v in APP_STORE_CONNECT_PRIVATE_KEY APP_STORE_CONNECT_KEY_IDENTIFIER APP_STORE_CONNECT_ISSUER_ID CM_CERTIFICATE CM_CERTIFICATE_PASSWORD; do
             eval "val=\$$v"
             if [ -n "$val" ]; then echo "$v: SET (${#val} chars)"; else echo "$v: EMPTY"; fi
           done
@@ -40,10 +40,9 @@ workflows:
         script: |
           set -e
           keychain initialize
-          echo "--- create Developer ID Application cert via the ASC key ---"
-          app-store-connect certificates create --type DEVELOPER_ID_APPLICATION --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save || echo "(create failed — may already exist, will list)"
-          app-store-connect list-certificates --type DEVELOPER_ID_APPLICATION --certificate-key="$CERTIFICATE_PRIVATE_KEY" --save || true
-          keychain add-certificates
+          echo "--- import the Developer ID .p12 (created by the Account Holder) ---"
+          echo "$CM_CERTIFICATE" | base64 --decode > /tmp/devid.p12
+          keychain add-certificates --certificate /tmp/devid.p12 --certificate-password "$CM_CERTIFICATE_PASSWORD"
           echo "--- signing identities available ---"
           security find-identity -v -p codesigning
           CERT="$(security find-identity -v -p codesigning | grep 'Developer ID Application' | head -1 | sed -E 's/^[[:space:]]*[0-9]+\) ([0-9A-F]+) .*/\1/')"
