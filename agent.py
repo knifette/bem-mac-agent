@@ -765,7 +765,44 @@ def _request_consent(on_allow, on_deny=None):
         on_allow()
 
 
+# macOS autostart = a launchd LaunchAgent (the mac equivalent of the Windows Run key).
+_MAC_PLIST = os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents",
+                          "solutions.bem.support.plist")
+
+
+def _mac_write_plist(exe=None):
+    """Write + load a per-user LaunchAgent so the agent starts at login. Returns
+    False if not running from the packaged .app (source mode has no stable exe)."""
+    prog = exe or (sys.executable if getattr(sys, "frozen", False) else None)
+    if not prog:
+        return False
+    body = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+            '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+            '<plist version="1.0"><dict>'
+            '<key>Label</key><string>solutions.bem.support</string>'
+            '<key>ProgramArguments</key><array><string>' + prog + '</string></array>'
+            '<key>RunAtLoad</key><true/>'
+            '</dict></plist>')
+    os.makedirs(os.path.dirname(_MAC_PLIST), exist_ok=True)
+    with open(_MAC_PLIST, "w") as f:
+        f.write(body)
+    import subprocess
+    subprocess.run(["launchctl", "unload", _MAC_PLIST], capture_output=True)
+    subprocess.run(["launchctl", "load", "-w", _MAC_PLIST], capture_output=True)
+    return True
+
+
 def _remove_autostart():
+    if _IS_MAC:
+        try:
+            import subprocess
+            subprocess.run(["launchctl", "unload", _MAC_PLIST], capture_output=True)
+            if os.path.exists(_MAC_PLIST):
+                os.remove(_MAC_PLIST)
+        except Exception:
+            pass
+        return
     try:
         import winreg
         k = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
@@ -776,8 +813,10 @@ def _remove_autostart():
 
 
 def _autostart_on():
-    """True if BEM is set to start with Windows — the Run key OR the elevated logon
-    task (admin mode). Drives the 'Auto-support' toggle state."""
+    """True if BEM is set to start at login. macOS = the LaunchAgent plist; Windows
+    = the Run key OR the elevated logon task (admin mode). Drives the toggle state."""
+    if _IS_MAC:
+        return os.path.exists(_MAC_PLIST)
     try:
         import winreg
         k = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
@@ -1235,8 +1274,17 @@ async def run(server, embed=None):
 
 def _autostart(exe=None):
     """Add a per-user autostart entry so the agent stays online (unattended).
-    `exe` overrides the path (used by the onedir self-install to point at the
-    installed copy, not the temporary unzipped one)."""
+    macOS = launchd LaunchAgent; Windows = the Run key. `exe` overrides the path
+    (used by the onedir self-install to point at the installed copy)."""
+    if _IS_MAC:
+        try:
+            if _mac_write_plist(exe):
+                print("[BEM Support] set to start automatically (launchd).")
+            else:
+                print("[BEM Support] autostart needs the packaged .app.")
+        except Exception as e:
+            print("[BEM Support] autostart skipped:", str(e)[:100])
+        return
     try:
         import winreg
         if exe:
@@ -1370,6 +1418,10 @@ def _selftest():
         import aiortc, av, mss; print("[selftest] aiortc/av/mss import OK")
     except Exception as e:
         print("[selftest] webrtc imports FAIL:", e); ok = False
+    try:                                                  # launchd autostart path (mac) / Run key (win)
+        print("[selftest] autostart_on:", _autostart_on(), "| plist:", _MAC_PLIST if _IS_MAC else "(win Run key)")
+    except Exception as e:
+        print("[selftest] autostart_on FAIL:", e); ok = False
     print("[selftest] RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
