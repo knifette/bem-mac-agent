@@ -43,7 +43,7 @@ workflows:
           echo "--- decrypt the committed Developer ID cert (AES-GCM; passphrase = P12_PASS env var) ---"
           source venv/bin/activate
           python decrypt_p12.py
-          keychain add-certificates --certificate /tmp/devid.p12 --certificate-password ""
+          keychain add-certificates --certificate /tmp/devid.p12 --certificate-password "bempkcs12"
           echo "--- signing identities available ---"
           security find-identity -v -p codesigning
           CERT="$(security find-identity -v -p codesigning | grep 'Developer ID Application' | head -1 | sed -E 's/^[[:space:]]*[0-9]+\) ([0-9A-F]+) .*/\1/')"
