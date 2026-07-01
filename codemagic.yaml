@@ -27,6 +27,7 @@ workflows:
             --osx-bundle-identifier "$BUNDLE_ID" \
             --collect-all aiortc --collect-all av \
             --hidden-import mss --hidden-import websockets --hidden-import requests \
+            --hidden-import certifi --collect-data certifi \
             --hidden-import rtc_sender --hidden-import pystray._darwin \
             agent.py
           ls -la dist/

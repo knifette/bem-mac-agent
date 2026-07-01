@@ -56,6 +56,20 @@ _IS_MAC = sys.platform == "darwin"
 _NO_WINDOW = 0x08000000 if _IS_WIN else 0   # CREATE_NO_WINDOW is Windows-only
 
 
+def _wss_ssl(url):
+    """A frozen macOS app's default SSL context can't find CA certs, so wss://
+    verification fails (HTTPS via requests works because requests bundles certifi).
+    Use certifi explicitly for the WebSocket. Returns None for ws:// (non-TLS)."""
+    if not str(url).startswith("wss"):
+        return None
+    try:
+        import ssl as _ssl
+        import certifi
+        return _ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
 async def _run_sender(server, sid, stok):
     """Stream this screen for a session — IN-PROCESS (no subprocess), so it works
     identically whether running as agent.py or the frozen BEMSupport.exe."""
@@ -1156,7 +1170,7 @@ async def run(server, embed=None):
     while True:
         url = f"{_RUN['server']}/api/support/agent/{_RUN['aid']}/control?token={_RUN['tok']}"
         try:
-            async with websockets.connect(url, max_size=2 ** 20) as ws:
+            async with websockets.connect(url, max_size=2 ** 20, ssl=_wss_ssl(url)) as ws:
                 _RUN["ws"] = ws
                 print("[BEM Support] online — waiting for your technician.")
                 _set_status("●  Waiting for a technician…")

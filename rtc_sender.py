@@ -167,7 +167,14 @@ async def run(args):
         return pc
 
     url = f"{args.server}/api/support/signal/{sid}?role=agent&token={tok}"
-    async with websockets.connect(url, max_size=2**22) as ws:
+    _ctx = None                                   # frozen-macOS wss cert fix (see agent._wss_ssl)
+    if str(url).startswith("wss"):
+        try:
+            import ssl as _ssl, certifi
+            _ctx = _ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            _ctx = None
+    async with websockets.connect(url, max_size=2**22, ssl=_ctx) as ws:
         log.info("signaling connected; waiting for viewer (peer_ready)")
 
         async for raw in ws:
